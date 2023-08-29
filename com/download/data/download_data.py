@@ -5,87 +5,106 @@ import pandas as pd
 import xml.etree.ElementTree as ET
 from datetime import datetime
 
-# Define the date range
-start_date = datetime.strptime('2023-01-01', '%Y-%m-%d')
-end_date = datetime.strptime('2023-08-01', '%Y-%m-%d')
 
-# Fetch XML response from the S3 URL
-# s3_url = 'https://s3-ap-northeast-1.amazonaws.com/data.binance.vision?delimiter=/&prefix=data/futures/um/daily/klines/ETHUSDT/1h/'
-s3_url = 'https://s3-ap-northeast-1.amazonaws.com/data.binance.vision?delimiter=/&prefix=data/futures/um/daily/klines' \
-         '/ETHUSDT/1h/&marker=data%2Ffutures%2Fum%2Fdaily%2Fklines%2FETHUSDT%2F1h%2FETHUSDT-1h-2022-09-25.zip.CHECKSUM'
-response = requests.get(s3_url)
-root = ET.fromstring(response.content)
+def fetch_and_combine_data(url, start_date, end_date):
+    # Fetch XML response from the S3 URL
+    response = requests.get(url)
+    root = ET.fromstring(response.content)
+    namespace = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+    data_type = url.split('/')[-2]
 
-# Define the XML namespace
-namespace = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+    # Create necessary folders
+    download_folder = f"downloaded_zips/{data_type}"
+    extract_folder = f"extracted_csvs/{data_type}"
 
-# Parse the XML and find ZIP files
-zip_files = []
-for content in root.findall("s3:Contents", namespace):
-    key = content.find("s3:Key", namespace).text
-    if key.endswith(".zip"):
-        # Extract date from ZIP file name
-        file_name = key.split('/')[-1]  # Get the last part of the key
-        date_str = '-'.join(file_name.split('-')[2:5]).replace('.zip', '')  # Extract the date part from the file name
-        zip_date = datetime.strptime(date_str, '%Y-%m-%d')  # Convert it to a datetime object
+    if not os.path.exists(download_folder):
+        os.makedirs(download_folder)
+    if not os.path.exists(extract_folder):
+        os.makedirs(extract_folder)
 
-        # Check if the date falls within the specified range
+    # Get ZIP files from XML response
+    zip_files = []
+    for content in root.findall("s3:Contents", namespace):
+        key = content.find("s3:Key", namespace).text
+        if key.endswith(".zip"):
+            date_str = '-'.join(key.split('-')[2:5]).replace('.zip', '')
+            zip_date = datetime.strptime(date_str, '%Y-%m-%d')
+            if start_date <= zip_date <= end_date:
+                zip_files.append(key)
+
+    # Download ZIP files
+    for zip_file in sorted(zip_files):
+        zip_url = f'https://s3-ap-northeast-1.amazonaws.com/data.binance.vision/{zip_file}'
+        local_zip_path = os.path.join(download_folder, zip_file.split('/')[-1])
+        print(f"Downloading {zip_url} to {local_zip_path}")
+
+        if not os.path.exists(local_zip_path):
+            response = requests.get(zip_url)
+            with open(local_zip_path, 'wb') as f:
+                f.write(response.content)
+                print(f"Downloaded {zip_file}")
+        else:
+            print(f"File {zip_file} already exists. Skipping download.")
+
+    # Extract ZIP files
+    for local_zip_path in sorted(os.listdir(download_folder)):
+        file_name = local_zip_path
+        date_str = '-'.join(file_name.split('-')[2:5]).replace('.zip', '')
+        zip_date = datetime.strptime(date_str, '%Y-%m-%d')
+
+        extracted_csv_name = f"{date_str}.csv"
+        extracted_csv_path = os.path.join(extract_folder, extracted_csv_name)
+
         if start_date <= zip_date <= end_date:
-            zip_files.append(key)
+            if not os.path.exists(extracted_csv_path):
+                print(f"Extracting {local_zip_path}")
+                with zipfile.ZipFile(os.path.join(download_folder, local_zip_path), 'r') as zip_ref:
+                    zip_ref.extractall(extract_folder)
+            else:
+                print(f"File {local_zip_path} has already been extracted. Skipping extraction.")
 
-# Download ZIP files
-download_folder = "downloaded_zips"
-if not os.path.exists(download_folder):
-    os.makedirs(download_folder)
+    # Combine CSV files into a single CSV
+    dfs = []
+    column_names = ['open_time', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_volume', 'count',
+                    'taker_buy_volume', 'taker_buy_quote_volume', 'ignore']
 
-for zip_file in sorted(zip_files):
-    zip_url = f'https://s3-ap-northeast-1.amazonaws.com/data.binance.vision/{zip_file}'
-    local_zip_path = os.path.join(download_folder, zip_file.split('/')[-1])
-    response = requests.get(zip_url)
-    with open(local_zip_path, 'wb') as f:
-        f.write(response.content)
-        print(f"Downloaded {zip_file}")
+    for csv_file in sorted(os.listdir(extract_folder)):
+        csv_date_str = csv_file.split('-')[-3:]
+        csv_date_str = '-'.join(csv_date_str).replace('.csv', '')
+        csv_date = datetime.strptime(csv_date_str, '%Y-%m-%d')
 
-# Print downloaded ZIP files
-print(f"Downloaded ZIP files: {os.listdir(download_folder)}")
+        if start_date <= csv_date <= end_date:
+            csv_path = os.path.join(extract_folder, csv_file)
 
-# Extract CSV files
-extract_folder = "extracted_csvs"
-if not os.path.exists(extract_folder):
-    os.makedirs(extract_folder)
+            # Try reading the CSV with headers first
+            try:
+                df = pd.read_csv(csv_path)
+                if list(df.columns) != list(column_names):
+                    raise ValueError('Invalid format')
+            except:
+                # Fallback to reading without headers
+                df = pd.read_csv(csv_path, header=None, names=column_names)
 
-for local_zip_path in sorted(os.listdir(download_folder)):
-    with zipfile.ZipFile(os.path.join(download_folder, local_zip_path), 'r') as zip_ref:
-        zip_ref.extractall(extract_folder)
+            dfs.append(df)
 
-# Print extracted CSV files
-print(f"Extracted CSV files: {os.listdir(extract_folder)}")
-
-# Combine CSV files into a single CSV
-csv_files = sorted([f for f in os.listdir(extract_folder) if f.endswith('.csv')])
-dfs = []
-
-# Read the first CSV to get the column names
-first_csv_path = os.path.join(extract_folder, csv_files[0])
-first_df = pd.read_csv(first_csv_path)
-column_names = first_df.columns
-
-for csv_file in csv_files:
-    csv_path = os.path.join(extract_folder, csv_file)
-    df = pd.read_csv(csv_path)
-
-    # Check if the DataFrame has the same columns as the first one
-    if list(df.columns) == list(column_names):
-        dfs.append(df)
+    if dfs:
+        final_df = pd.concat(dfs, ignore_index=True)
+        final_csv_path = f"combined_data_{data_type}.csv"
+        final_df.to_csv(final_csv_path, index=False)
+        print(f"Combined data saved to {final_csv_path}")
     else:
-        print(f"Skipping {csv_file} due to different column structure")
+        print("No DataFrames to concatenate.")
 
-# Print DataFrames to concatenate
-print(f"DataFrames to concatenate: {len(dfs)}")
 
-# Concatenate the DataFrames
-if dfs:
-    final_df = pd.concat(dfs, ignore_index=True)
-    final_df.to_csv("combined_data.csv", index=False)
-else:
-    print("No DataFrames to concatenate.")
+if __name__ == "__main__":
+    # url = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision?delimiter=/&prefix=data/futures/um/daily/klines/ETHUSDT/1h/"
+    time_interval = '1d'
+    market = 'ETHUSDT'
+    s3_url = f"https://s3-ap-northeast-1.amazonaws.com/data.binance.vision?delimiter=/&prefix=data/futures/um/daily/" \
+             f"klines/{market}/{time_interval}/&marker=data%2Ffutures%2Fum%2Fdaily%2Fklines%2F{market}%2F" \
+             f"{time_interval}%2F{market}-{time_interval}-2022-12-31.zip.CHECKSUM"
+
+    start_date = datetime.strptime('2022-01-01', '%Y-%m-%d')
+    end_date = datetime.strptime('2023-08-29', '%Y-%m-%d')
+
+    fetch_and_combine_data(s3_url, start_date, end_date)
