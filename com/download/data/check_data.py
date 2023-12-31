@@ -16,7 +16,7 @@ def check_market_data_order_and_duplicates(csv_path):
     return is_open_time_sorted, is_close_time_sorted, has_duplicates
 
 if __name__ == "__main__":
-    csv_path = "combined_data_1d.csv"  # Replace with the path to your CSV file
+    csv_path = "combined_data_1h.csv"  # Replace with the path to your CSV file
     print(os.getcwd())
     is_open_time_sorted, is_close_time_sorted, has_duplicates = check_market_data_order_and_duplicates(csv_path)
 

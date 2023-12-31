@@ -99,12 +99,12 @@ def fetch_and_combine_data(url, market_name, start_date, end_date):
 if __name__ == "__main__":
 
     time_interval = '1h'
-    market = 'ETHUSDT'
+    market = 'BTCUSDT'
     s3_url = f"https://s3-ap-northeast-1.amazonaws.com/data.binance.vision?delimiter=/&prefix=data/futures/um/daily/" \
              f"klines/{market}/{time_interval}/&marker=data%2Ffutures%2Fum%2Fdaily%2Fklines%2F{market}%2F" \
-             f"{time_interval}%2F{market}-{time_interval}-2021-12-31.zip.CHECKSUM"
+             f"{time_interval}%2F{market}-{time_interval}-2023-01-01.zip.CHECKSUM"
 
-    start_date = datetime.strptime('2022-01-01', '%Y-%m-%d')
+    start_date = datetime.strptime('2023-06-01', '%Y-%m-%d')
     end_date = datetime.strptime('2023-08-31', '%Y-%m-%d')
 
     fetch_and_combine_data(s3_url, market, start_date, end_date)
